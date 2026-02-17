@@ -1,0 +1,223 @@
+@import "tailwindcss";
+
+@plugin "tailwindcss-animate";
+
+/* ──────────────────────────────────────────
+   CivicPulse Premium Design System — "Deep Navy + Teal"
+   ────────────────────────────────────────── */
+
+@theme {
+  /* 
+   * Semantic color tokens — OKLCH for perceptual uniformity 
+   * Theme: Deep Navy background + Teal accents → premium civic-tech SaaS
+   */
+  --color-background: oklch(98% 0.005 230);
+  --color-foreground: oklch(15% 0.04 230);
+
+  /* Deep Teal Primary */
+  --color-primary: oklch(52% 0.12 195);
+  --color-primary-foreground: oklch(98% 0.005 195);
+
+  /* Light Neutral Secondary */
+  --color-secondary: oklch(96% 0.008 230);
+  --color-secondary-foreground: oklch(15% 0.04 230);
+
+  --color-muted: oklch(95% 0.008 230);
+  --color-muted-foreground: oklch(46% 0.02 230);
+
+  --color-accent: oklch(95% 0.01 195);
+  --color-accent-foreground: oklch(15% 0.04 230);
+
+  --color-destructive: oklch(60% 0.2 20);
+  --color-destructive-foreground: oklch(98% 0.005 195);
+
+  --color-border: oklch(90% 0.01 230);
+  --color-ring: oklch(52% 0.12 195);
+
+  --color-card: oklch(100% 0 0);
+  --color-card-foreground: oklch(15% 0.04 230);
+
+  /* Glass tokens */
+  --color-glass: oklch(100% 0 0 / 65%);
+  --color-glass-border: oklch(0% 0 0 / 6%);
+  --color-glass-highlight: oklch(100% 0 0 / 30%);
+
+  /* Radius tokens */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 2rem;
+  --radius-full: 9999px;
+
+  /* Animation tokens */
+  --animate-fade-in: fade-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-slide-up: slide-up 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-scale-in: scale-in 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-pulse-glow: pulse-glow 3s ease-in-out infinite;
+  --animate-float: float 6s ease-in-out infinite;
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+  @keyframes slide-up {
+    from {
+      transform: translateY(20px);
+      opacity: 0;
+    }
+
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes scale-in {
+    from {
+      transform: scale(0.95);
+      opacity: 0;
+    }
+
+    to {
+      transform: scale(1);
+      opacity: 1;
+    }
+  }
+
+  @keyframes pulse-glow {
+
+    0%,
+    100% {
+      box-shadow: 0 0 20px -10px oklch(52% 0.12 195 / 0%);
+    }
+
+    50% {
+      box-shadow: 0 0 30px -5px oklch(52% 0.12 195 / 40%);
+    }
+  }
+
+  @keyframes float {
+
+    0%,
+    100% {
+      transform: translateY(0);
+    }
+
+    50% {
+      transform: translateY(-10px);
+    }
+  }
+}
+
+/* ── Dark Mode (Deep Navy Theme) ── */
+@custom-variant dark (&:where(.dark, .dark *));
+
+.dark {
+  color-scheme: dark;
+
+  /* Deep Navy Background */
+  --color-background: oklch(12% 0.035 230);
+  --color-foreground: oklch(96% 0.008 230);
+
+  /* Bright Teal Primary */
+  --color-primary: oklch(65% 0.14 195);
+  --color-primary-foreground: oklch(100% 0 0);
+
+  --color-secondary: oklch(18% 0.03 230);
+  --color-secondary-foreground: oklch(96% 0.008 230);
+
+  --color-muted: oklch(18% 0.03 230);
+  --color-muted-foreground: oklch(68% 0.02 230);
+
+  --color-accent: oklch(22% 0.04 230);
+  --color-accent-foreground: oklch(96% 0.008 230);
+
+  --color-destructive: oklch(60% 0.2 20);
+  --color-destructive-foreground: oklch(98% 0.005 230);
+
+  --color-border: oklch(22% 0.03 230);
+  --color-ring: oklch(65% 0.14 195);
+
+  --color-card: oklch(16% 0.03 230);
+  --color-card-foreground: oklch(96% 0.008 230);
+
+  /* Premium Glass tokens — navy tinted */
+  --color-glass: oklch(16% 0.03 230 / 60%);
+  --color-glass-border: oklch(100% 0 0 / 8%);
+  --color-glass-highlight: oklch(100% 0 0 / 12%);
+}
+
+@layer base {
+
+  html.lenis,
+  html.lenis body {
+    height: auto;
+  }
+
+  .lenis.lenis-smooth {
+    scroll-behavior: auto !important;
+  }
+
+  .lenis.lenis-smooth [data-lenis-prevent] {
+    overscroll-behavior: contain;
+  }
+
+  .lenis.lenis-stopped {
+    overflow: hidden;
+  }
+
+  .lenis.lenis-scrolling iframe {
+    pointer-events: none;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-primary/30 selection:text-primary-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* ── Premium Utilities ── */
+@utility glass-card {
+  background: var(--color-glass);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid var(--color-glass-border);
+  box-shadow:
+    0 4px 24px -1px oklch(0% 0 0 / 8%),
+    inset 0 1px 0 0 var(--color-glass-highlight);
+  border-radius: var(--radius-xl);
+  transition: transform 0.3s ease-out, box-shadow 0.3s ease-out, border-color 0.3s;
+
+  &:hover {
+    border-color: oklch(65% 0.14 195 / 25%);
+    box-shadow:
+      0 8px 32px -4px oklch(0% 0 0 / 15%),
+      inset 0 1px 0 0 var(--color-glass-highlight);
+  }
+}
+
+@utility gradient-text {
+  background: linear-gradient(135deg, oklch(50% 0.14 220), oklch(65% 0.14 195));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility bg-mesh {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  opacity: 0.5;
+  background-image:
+    radial-gradient(circle at 15% 50%, oklch(52% 0.12 195 / 10%), transparent 40%),
+    radial-gradient(circle at 85% 30%, oklch(50% 0.10 220 / 10%), transparent 40%),
+    url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+}

@@ -1,0 +1,9 @@
+src/app/admin/dashboard/page.tsx(22,8): error TS2307: Cannot find module '@/components/ui/table' or its corresponding type declarations.
+src/app/admin/dashboard/page.tsx(30,8): error TS2307: Cannot find module '@/components/ui/dropdown-menu' or its corresponding type declarations.
+src/app/admin/dashboard/page.tsx(190,34): error TS2304: Cannot find name 'cn'.
+src/app/layout.tsx(3,31): error TS2307: Cannot find module '@/components/theme-provider' or its corresponding type declarations.
+src/components/navbar.tsx(20,26): error TS2307: Cannot find module 'next-themes' or its corresponding type declarations.
+src/components/navbar.tsx(29,8): error TS2307: Cannot find module '@/components/ui/dropdown-menu' or its corresponding type declarations.
+src/components/navbar.tsx(30,18): error TS2305: Module '"@/components/ui/avatar"' has no exported member 'AvatarFallback'.
+src/components/navbar.tsx(130,50): error TS2741: Property 'fallback' is missing in type '{ children: Element; className: string; }' but required in type 'AvatarProps'.
+src/components/navbar.tsx(212,42): error TS2741: Property 'fallback' is missing in type '{ children: Element; }' but required in type 'AvatarProps'.
