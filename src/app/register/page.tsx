@@ -280,6 +280,9 @@ export default function RegisterPage() {
                                         </div>
                                     )}
 
+                                    {/* Clerk bot protection CAPTCHA */}
+                                    <div id="clerk-captcha" />
+
                                     <Button type="submit" className="w-full" size="lg" disabled={isLoading}>
                                         {isLoading ? (
                                             <><Loader2 className="size-4 mr-2 animate-spin" /> {t("creating_account")}</>

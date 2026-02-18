@@ -1,31 +1,8 @@
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
+import { clerkMiddleware } from '@clerk/nextjs/server';
 
-// Define public routes that don't require Clerk authentication
-const isPublicRoute = createRouteMatcher([
-    '/',
-    '/login(.*)',
-    '/register(.*)',
-    '/admin/login(.*)',
-    '/categories(.*)',
-    '/community(.*)',
-    '/community-help(.*)',
-    '/community-voting(.*)',
-    '/civic-education(.*)',
-    '/civic-simulator(.*)',
-    '/heatmap(.*)',
-    '/map(.*)',
-    '/nearby-services(.*)',
-    '/analytics(.*)',
-    '/leaderboard(.*)',
-    '/sos(.*)',
-    '/api(.*)',
-]);
-
-export default clerkMiddleware(async (auth, req) => {
-    if (!isPublicRoute(req)) {
-        await auth.protect();
-    }
-});
+// All routes are public — we use our own JWT auth for backend protection.
+// Clerk is only used for email OTP verification during registration.
+export default clerkMiddleware();
 
 export const config = {
     matcher: [
