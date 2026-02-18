@@ -1,8 +1,9 @@
-// providers/AuthProvider.tsx — Auth context with JWT token management
+// providers/AuthProvider.tsx — Auth context bridging Clerk + local JWT
 "use client";
 
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth as useClerkAuth, useUser as useClerkUser } from "@clerk/nextjs";
 import api from "@/lib/api";
 
 interface User {
@@ -24,6 +25,7 @@ interface AuthContextType {
     login: (email: string, password: string) => Promise<void>;
     register: (data: { name: string; email: string; phone?: string; password: string }) => Promise<void>;
     logout: () => void;
+    syncClerkUser: (email: string, clerkUserId: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -33,6 +35,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [token, setToken] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const router = useRouter();
+    const { signOut: clerkSignOut } = useClerkAuth();
 
     // Fetch profile with existing token
     const fetchProfile = useCallback(async (authToken: string) => {
@@ -44,7 +47,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setUser(res.data.data.user);
             }
         } catch {
-            // Token is invalid — clear it
             localStorage.removeItem("token");
             setToken(null);
             setUser(null);
@@ -72,9 +74,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setUser(data.user);
             router.push("/dashboard");
         } catch (err: any) {
-            // Handle unverified account — redirect to OTP verification
-            if (err?.response?.status === 403 && err?.response?.data?.data?.requiresOTP) {
-                throw { requiresOTP: true, email: err.response.data.data.email, message: err.response.data.message };
+            if (err?.response?.status === 403 && err?.response?.data?.data?.requiresClerkVerification) {
+                throw { requiresClerkVerification: true, email: err.response.data.data.email, message: err.response.data.message };
             }
             throw err;
         }
@@ -82,11 +83,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const register = useCallback(async (data: { name: string; email: string; phone?: string; password: string }) => {
         const res = await api.post("/users/register", data);
-        const { token: newToken, data: resData } = res.data;
+        // Registration doesn't return a token anymore — user needs Clerk verification first
+        if (res.data?.data?.requiresClerkVerification) {
+            return; // Frontend handles Clerk OTP flow
+        }
+        // Fallback if somehow a token is returned
+        if (res.data?.token) {
+            localStorage.setItem("token", res.data.token);
+            setToken(res.data.token);
+            setUser(res.data.data?.user);
+            router.push("/dashboard");
+        }
+    }, [router]);
+
+    // Called after successful Clerk OTP verification
+    const syncClerkUser = useCallback(async (email: string, clerkUserId: string) => {
+        const res = await api.post("/users/clerk-verify", { email, clerkUserId });
+        const { token: newToken, data } = res.data;
 
         localStorage.setItem("token", newToken);
         setToken(newToken);
-        setUser(resData.user);
+        setUser(data.user);
         router.push("/dashboard");
     }, [router]);
 
@@ -94,8 +111,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         localStorage.removeItem("token");
         setToken(null);
         setUser(null);
+        // Sign out of Clerk too
+        clerkSignOut().catch(() => { });
         router.push("/");
-    }, [router]);
+    }, [router, clerkSignOut]);
 
     return (
         <AuthContext.Provider
@@ -107,6 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 login,
                 register,
                 logout,
+                syncClerkUser,
             }}
         >
             {children}

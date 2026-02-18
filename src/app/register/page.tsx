@@ -1,4 +1,4 @@
-// app/register/page.tsx — Registration with OTP verification + Hindi support
+// app/register/page.tsx — Registration with Clerk Email OTP + Hindi support
 "use client";
 
 import { useState } from "react";
@@ -16,10 +16,14 @@ import {
 import { Container } from "@/components/ui/grid";
 import { useAuth } from "@/providers/AuthProvider";
 import { useLanguage } from "@/providers/LanguageProvider";
+import { useSignUp } from "@clerk/nextjs";
 import api from "@/lib/api";
 
 export default function RegisterPage() {
     const { t } = useLanguage();
+    const { isLoaded: isClerkLoaded, signUp, setActive } = useSignUp();
+    const { syncClerkUser } = useAuth();
+
     const [name, setName] = useState("");
     const [email, setEmail] = useState("");
     const [phone, setPhone] = useState("");
@@ -32,8 +36,6 @@ export default function RegisterPage() {
     const [showOTP, setShowOTP] = useState(false);
     const [otp, setOtp] = useState("");
     const [resendTimer, setResendTimer] = useState(0);
-
-    const { login: authLogin } = useAuth();
 
     function startResendTimer() {
         setResendTimer(60);
@@ -62,19 +64,34 @@ export default function RegisterPage() {
             setError("Passwords do not match.");
             return;
         }
+        if (!isClerkLoaded || !signUp) {
+            setError("Authentication service is loading. Please wait.");
+            return;
+        }
 
         setIsLoading(true);
         setError("");
 
         try {
-            const res = await api.post("/users/register", { name, email, phone, password });
-            if (res.data?.data?.requiresOTP) {
-                setShowOTP(true);
-                startResendTimer();
-            }
+            // Step 1: Create user in local DB (unverified)
+            await api.post("/users/register", { name, email, phone, password });
+
+            // Step 2: Create Clerk sign-up and send OTP
+            await signUp.create({
+                emailAddress: email,
+                password,
+            });
+
+            // Step 3: Prepare email verification (Clerk sends OTP email)
+            await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
+
+            setShowOTP(true);
+            startResendTimer();
         } catch (err: any) {
-            const message = err?.response?.data?.message || t("error");
-            setError(message);
+            // Handle Clerk-specific errors
+            const clerkError = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message;
+            const apiError = err?.response?.data?.message;
+            setError(clerkError || apiError || t("error"));
         } finally {
             setIsLoading(false);
         }
@@ -86,34 +103,50 @@ export default function RegisterPage() {
             setError("Please enter the 6-digit OTP.");
             return;
         }
+        if (!isClerkLoaded || !signUp) {
+            setError("Authentication service is loading. Please wait.");
+            return;
+        }
 
         setIsLoading(true);
         setError("");
 
         try {
-            const res = await api.post("/users/verify-otp", { email, otp });
-            if (res.data?.token) {
-                localStorage.setItem("token", res.data.token);
-                window.location.href = "/dashboard";
+            // Verify OTP with Clerk
+            const result = await signUp.attemptEmailAddressVerification({ code: otp });
+
+            if (result.status === "complete" && result.createdUserId) {
+                // Set the active Clerk session
+                if (setActive) {
+                    await setActive({ session: result.createdSessionId });
+                }
+
+                // Sync with backend — verify and get JWT
+                await syncClerkUser(email, result.createdUserId);
+            } else {
+                setError("Verification incomplete. Please try again.");
             }
         } catch (err: any) {
-            const message = err?.response?.data?.message || t("error");
-            setError(message);
+            const clerkError = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message;
+            const apiError = err?.response?.data?.message;
+            setError(clerkError || apiError || t("error"));
         } finally {
             setIsLoading(false);
         }
     }
 
     async function handleResendOTP() {
-        if (resendTimer > 0) return;
+        if (resendTimer > 0 || !isClerkLoaded || !signUp) return;
         setIsLoading(true);
         setError("");
 
         try {
-            await api.post("/users/resend-otp", { email });
+            // Resend OTP via Clerk
+            await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
             startResendTimer();
         } catch (err: any) {
-            setError(err?.response?.data?.message || t("error"));
+            const clerkError = err?.errors?.[0]?.longMessage || err?.errors?.[0]?.message;
+            setError(clerkError || t("error"));
         } finally {
             setIsLoading(false);
         }

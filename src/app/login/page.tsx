@@ -1,9 +1,9 @@
 // app/login/page.tsx — Login page
-// Follows: Tailwind SKILL (shadcn components), Web Design (form labels, autocomplete, focus)
 "use client";
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { LogIn, Loader2, Mail, Lock, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,7 @@ export default function LoginPage() {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState("");
     const { login } = useAuth();
+    const router = useRouter();
 
     async function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
@@ -37,6 +38,12 @@ export default function LoginPage() {
         try {
             await login(email, password);
         } catch (err: any) {
+            // If account needs Clerk verification, redirect to register
+            if (err?.requiresClerkVerification) {
+                setError(err.message || "Account not verified. Please complete registration.");
+                setTimeout(() => router.push("/register"), 2000);
+                return;
+            }
             const message = err?.response?.data?.message || "Invalid email or password. Please try again.";
             setError(message);
         } finally {

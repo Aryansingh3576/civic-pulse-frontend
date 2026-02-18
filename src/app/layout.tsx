@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { Inter, Outfit } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/providers/AuthProvider";
-import { LanguageProvider } from "@/providers/LanguageProvider"; // Added
-import { Toaster } from "@/components/ui/toaster"; // Added
+import { LanguageProvider } from "@/providers/LanguageProvider";
+import { Toaster } from "@/components/ui/toaster";
 import SmoothScroll from "@/components/smooth-scroll";
 import Navbar from "@/components/navbar";
 import "./globals.css";
@@ -24,26 +25,28 @@ export default function RootLayout({
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} ${outfit.variable} antialiased min-h-screen flex flex-col`}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="light"
-          forcedTheme="light"
-          enableSystem={false}
-          disableTransitionOnChange
-        >
-          <LanguageProvider>
-            <AuthProvider>
-              <SmoothScroll>
-                <div className="bg-mesh" aria-hidden="true" />
-                <Navbar />
-                <main className="flex-1 w-full relative z-0">
-                  {children}
-                </main>
-              </SmoothScroll>
-              <Toaster />
-            </AuthProvider>
-          </LanguageProvider>
-        </ThemeProvider>
+        <ClerkProvider>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="light"
+            forcedTheme="light"
+            enableSystem={false}
+            disableTransitionOnChange
+          >
+            <LanguageProvider>
+              <AuthProvider>
+                <SmoothScroll>
+                  <div className="bg-mesh" aria-hidden="true" />
+                  <Navbar />
+                  <main className="flex-1 w-full relative z-0">
+                    {children}
+                  </main>
+                </SmoothScroll>
+                <Toaster />
+              </AuthProvider>
+            </LanguageProvider>
+          </ThemeProvider>
+        </ClerkProvider>
       </body>
     </html>
   );
