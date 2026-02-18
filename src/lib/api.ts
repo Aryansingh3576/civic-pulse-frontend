@@ -3,7 +3,7 @@ import axios from "axios";
 
 const api = axios.create({
     baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:5000/api",
-    timeout: 10000,
+    timeout: 60000, // 60s — Render free-tier cold starts can take ~30-50s
     headers: {
         "Content-Type": "application/json",
     },
