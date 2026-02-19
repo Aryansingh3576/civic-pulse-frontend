@@ -69,6 +69,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             const res = await api.post("/users/login", { email, password });
             const { token: newToken, data } = res.data;
 
+            // If user is admin, redirect to admin portal instead
+            if (data.user?.role === "admin") {
+                localStorage.setItem("admin_token", newToken);
+                localStorage.setItem("admin_user", JSON.stringify(data.user));
+                router.push("/admin/dashboard");
+                return;
+            }
+
             localStorage.setItem("token", newToken);
             setToken(newToken);
             setUser(data.user);
