@@ -123,6 +123,166 @@ const steps = [
     { id: 3, label: "Details & Submit", icon: FileText },
 ];
 
+// Helper: extract GPS coordinates AND DateTimeOriginal from EXIF data in a JPEG
+function extractExifMetadata(file: File): Promise<{ gps: { lat: number; lng: number } | null; datetime: string | null }> {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const view = new DataView(e.target?.result as ArrayBuffer);
+                // Check JPEG SOI marker
+                if (view.getUint16(0) !== 0xFFD8) { resolve({ gps: null, datetime: null }); return; }
+                let offset = 2;
+                while (offset < view.byteLength - 2) {
+                    const marker = view.getUint16(offset);
+                    if (marker === 0xFFE1) { // APP1 (EXIF)
+                        const exifStart = offset + 4;
+                        // Check 'Exif\0\0'
+                        const exifHeader = String.fromCharCode(
+                            view.getUint8(exifStart), view.getUint8(exifStart + 1),
+                            view.getUint8(exifStart + 2), view.getUint8(exifStart + 3)
+                        );
+                        if (exifHeader !== 'Exif') { resolve({ gps: null, datetime: null }); return; }
+                        const tiffStart = exifStart + 6;
+                        const bigEndian = view.getUint16(tiffStart) === 0x4D4D;
+                        const g16 = (o: number) => bigEndian ? view.getUint16(o) : view.getUint16(o, true);
+                        const g32 = (o: number) => bigEndian ? view.getUint32(o) : view.getUint32(o, true);
+                        const ifdOffset = g32(tiffStart + 4);
+                        const numEntries = g16(tiffStart + ifdOffset);
+
+                        let gpsIfdPointer = 0;
+                        let exifIfdPointer = 0;
+                        let dateTimeStr: string | null = null;
+
+                        // Read ASCII string from EXIF
+                        const readAscii = (off: number, len: number) => {
+                            let s = '';
+                            for (let i = 0; i < len; i++) {
+                                const c = view.getUint8(off + i);
+                                if (c === 0) break;
+                                s += String.fromCharCode(c);
+                            }
+                            return s;
+                        };
+
+                        // Parse IFD0 entries
+                        for (let i = 0; i < numEntries; i++) {
+                            const entOff = tiffStart + ifdOffset + 2 + i * 12;
+                            const tag = g16(entOff);
+                            if (tag === 0x8825) gpsIfdPointer = g32(entOff + 8); // GPSInfo
+                            if (tag === 0x8769) exifIfdPointer = g32(entOff + 8); // ExifIFD
+                            // DateTime (IFD0, tag 0x0132) - fallback
+                            if (tag === 0x0132) {
+                                const count = g32(entOff + 4);
+                                if (count <= 4) {
+                                    dateTimeStr = readAscii(entOff + 8, count);
+                                } else {
+                                    dateTimeStr = readAscii(tiffStart + g32(entOff + 8), count);
+                                }
+                            }
+                        }
+
+                        // Parse Exif sub-IFD for DateTimeOriginal (preferred)
+                        if (exifIfdPointer) {
+                            const exifOff = tiffStart + exifIfdPointer;
+                            const exifEntries = g16(exifOff);
+                            for (let i = 0; i < exifEntries; i++) {
+                                const eo = exifOff + 2 + i * 12;
+                                const tag = g16(eo);
+                                // DateTimeOriginal (0x9003) or DateTimeDigitized (0x9004)
+                                if (tag === 0x9003 || tag === 0x9004) {
+                                    const count = g32(eo + 4);
+                                    const dtStr = count <= 4
+                                        ? readAscii(eo + 8, count)
+                                        : readAscii(tiffStart + g32(eo + 8), count);
+                                    if (dtStr && dtStr.length >= 19) {
+                                        dateTimeStr = dtStr; // Prefer DateTimeOriginal
+                                        if (tag === 0x9003) break; // Use DateTimeOriginal if found
+                                    }
+                                }
+                            }
+                        }
+
+                        // Convert EXIF datetime "YYYY:MM:DD HH:MM:SS" to ISO
+                        let parsedDateTime: string | null = null;
+                        if (dateTimeStr && dateTimeStr.length >= 19) {
+                            const iso = dateTimeStr.replace(/^(\d{4}):(\d{2}):(\d{2})/, '$1-$2-$3');
+                            const d = new Date(iso);
+                            if (!isNaN(d.getTime())) parsedDateTime = d.toISOString();
+                        }
+
+                        // Parse GPS IFD
+                        let gps: { lat: number; lng: number } | null = null;
+                        if (gpsIfdPointer) {
+                            const gpsOff = tiffStart + gpsIfdPointer;
+                            const gpsEntries = g16(gpsOff);
+                            let latRef = '', lngRef = '';
+                            let latVals: number[] = [], lngVals: number[] = [];
+                            const readRational = (off: number) => {
+                                const num = g32(off);
+                                const den = g32(off + 4);
+                                return den ? num / den : 0;
+                            };
+                            const readDMS = (valOffset: number) => {
+                                const o = tiffStart + valOffset;
+                                return [readRational(o), readRational(o + 8), readRational(o + 16)];
+                            };
+                            for (let i = 0; i < gpsEntries; i++) {
+                                const eo = gpsOff + 2 + i * 12;
+                                const tag = g16(eo);
+                                if (tag === 1) latRef = String.fromCharCode(view.getUint8(eo + 8));
+                                if (tag === 3) lngRef = String.fromCharCode(view.getUint8(eo + 8));
+                                if (tag === 2) latVals = readDMS(g32(eo + 8));
+                                if (tag === 4) lngVals = readDMS(g32(eo + 8));
+                            }
+                            if (latVals.length === 3 && lngVals.length === 3) {
+                                let lat = latVals[0] + latVals[1] / 60 + latVals[2] / 3600;
+                                let lng = lngVals[0] + lngVals[1] / 60 + lngVals[2] / 3600;
+                                if (latRef === 'S') lat = -lat;
+                                if (lngRef === 'W') lng = -lng;
+                                gps = { lat, lng };
+                            }
+                        }
+
+                        resolve({ gps, datetime: parsedDateTime });
+                        return;
+                    }
+                    offset += 2 + view.getUint16(offset + 2);
+                }
+                resolve({ gps: null, datetime: null });
+            } catch { resolve({ gps: null, datetime: null }); }
+        };
+        reader.onerror = () => resolve({ gps: null, datetime: null });
+        reader.readAsArrayBuffer(file.slice(0, 128 * 1024)); // Read first 128KB for EXIF
+    });
+}
+
+// Helper: compress image and convert to base64 (max 1200px, JPEG quality 0.7)
+function compressAndConvertToBase64(file: File, maxSize = 1200, quality = 0.7): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            let { width, height } = img;
+            // Scale down if larger than maxSize
+            if (width > maxSize || height > maxSize) {
+                const ratio = Math.min(maxSize / width, maxSize / height);
+                width = Math.round(width * ratio);
+                height = Math.round(height * ratio);
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+            if (!ctx) { reject(new Error('Canvas not supported')); return; }
+            ctx.drawImage(img, 0, 0, width, height);
+            const dataUrl = canvas.toDataURL('image/jpeg', quality);
+            resolve(dataUrl);
+        };
+        img.onerror = () => reject(new Error('Failed to load image'));
+        img.src = URL.createObjectURL(file);
+    });
+}
+
 export default function ComplaintForm() {
     const { isAuthenticated, isLoading: authLoading } = useAuth();
     const { t } = useLanguage();
@@ -140,13 +300,15 @@ export default function ComplaintForm() {
     const [isRecording, setIsRecording] = useState(false);
     const [photo, setPhoto] = useState<File | null>(null);
     const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+    const [photoGps, setPhotoGps] = useState<{ lat: number; lng: number } | null>(null);
+    const [photoDatetime, setPhotoDatetime] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isSuccess, setIsSuccess] = useState(false);
     const [error, setError] = useState("");
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [showMapPicker, setShowMapPicker] = useState(false);
     // Community sharing
-    const [shareToFeed, setShareToFeed] = useState(false);
+    const [shareToFeed, setShareToFeed] = useState(true);
     const [isAnonymous, setIsAnonymous] = useState(false);
 
     useEffect(() => {
@@ -211,9 +373,13 @@ export default function ComplaintForm() {
     }
 
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [aiSuggestion, setAiSuggestion] = useState<{ category: string; severity: string; confidence: number } | null>(null);
+    const [aiSuggestion, setAiSuggestion] = useState<{ category: string; severity: string; confidence: number; detectedIssue?: string; isRelevant?: boolean } | null>(null);
 
-    function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+    // Text-based AI classification state
+    const [isTextClassifying, setIsTextClassifying] = useState(false);
+    const [textAiSuggestion, setTextAiSuggestion] = useState<{ suggestedCategory: string; severity: string; confidence: number; explanation: string } | null>(null);
+
+    async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
         const file = e.target.files?.[0];
         if (!file) return;
         if (file.size > 5 * 1024 * 1024) {
@@ -224,27 +390,109 @@ export default function ComplaintForm() {
         setPhotoPreview(URL.createObjectURL(file));
         setError("");
 
-        // Simulate AI Analysis
-        setIsAnalyzing(true);
-        setTimeout(() => {
-            // Mock result based on random logic or filename (for demo)
-            const mockCats = ["pothole", "garbage", "water", "streetlights"];
-            const suggested = mockCats[Math.floor(Math.random() * mockCats.length)];
+        // Extract EXIF metadata (GPS + DateTime) from photo
+        const metadata = await extractExifMetadata(file);
+        setPhotoGps(metadata.gps);
+        setPhotoDatetime(metadata.datetime);
 
-            setAiSuggestion({
-                category: suggested,
-                severity: "High",
-                confidence: 0.92
+        // If photo has GPS, update the complaint location to match
+        if (metadata.gps) {
+            setCoords(metadata.gps);
+            try {
+                const geoRes = await fetch(
+                    `https://nominatim.openstreetmap.org/reverse?lat=${metadata.gps.lat}&lon=${metadata.gps.lng}&format=json&addressdetails=1`,
+                    { headers: { "Accept-Language": "en" } }
+                );
+                const geoData = await geoRes.json();
+                const displayName = geoData.display_name || `${metadata.gps.lat.toFixed(5)}, ${metadata.gps.lng.toFixed(5)}`;
+                setAddress(displayName);
+            } catch {
+                setAddress(`${metadata.gps.lat.toFixed(5)}, ${metadata.gps.lng.toFixed(5)}`);
+            }
+        }
+
+        // Real AI Analysis via backend
+        setIsAnalyzing(true);
+        try {
+            const compressed = await compressAndConvertToBase64(file, 800, 0.6);
+            // Strip the data:image/...;base64, prefix for the backend
+            const base64Data = compressed.replace(/^data:image\/\w+;base64,/, '');
+
+            const res = await api.post('/complaints/verify-image', {
+                image: base64Data,
             });
 
-            // Auto-select category if not selected
-            if (!selectedCategory) {
-                // Map mock to actual IDs
-                const map: Record<string, string> = { pothole: "road", garbage: "garbage", water: "water", streetlights: "streetlights" };
-                if (map[suggested]) setSelectedCategory(map[suggested]);
+            const result = res.data?.data;
+            if (result) {
+                // Map AI suggested category to form category id
+                const aiCategoryMap: Record<string, string> = {
+                    'pothole': 'road', 'road damage': 'road', 'garbage': 'garbage',
+                    'street light': 'streetlights', 'water leakage': 'water',
+                    'water supply': 'water', 'stray animals': 'stray-animals',
+                    'drainage': 'drainage', 'public safety': 'safety',
+                    'electricity': 'electricity', 'other': 'other',
+                };
+                const suggestedKey = (result.suggestedCategory || '').toLowerCase();
+                const formCategoryId = aiCategoryMap[suggestedKey] || 'other';
+
+                // Determine severity from confidence
+                const severity = result.confidence >= 0.8 ? 'High' : result.confidence >= 0.5 ? 'Medium' : 'Low';
+
+                setAiSuggestion({
+                    category: result.suggestedCategory || 'Other',
+                    severity,
+                    confidence: result.confidence ?? 0,
+                    detectedIssue: result.detectedIssue || '',
+                    isRelevant: result.isRelevant ?? true,
+                });
+
+                // Always update category to AI-detected one (photo is ground truth)
+                if (formCategoryId && result.isRelevant && formCategoryId !== 'other') {
+                    setSelectedCategory(formCategoryId);
+                }
             }
+        } catch (err) {
+            console.error('AI analysis failed:', err);
+            // Don't block — just hide the AI overlay
+        } finally {
             setIsAnalyzing(false);
-        }, 2500);
+        }
+    }
+
+    // AI text-based classification — called on description blur or when user has typed enough
+    const aiCategoryMap: Record<string, string> = {
+        'pothole': 'road', 'road damage': 'road', 'garbage': 'garbage',
+        'street light': 'streetlights', 'water leakage': 'water', 'water supply': 'water',
+        'stray animals': 'stray-animals', 'drainage': 'drainage', 'public safety': 'safety',
+        'electricity': 'electricity', 'traffic': 'other', 'parks': 'other',
+        'noise': 'other', 'other': 'other',
+    };
+
+    async function classifyFromText() {
+        const text = `${title} ${description}`.trim();
+        if (text.length < 10) return; // Need minimum text
+        // Skip if photo already gave a good classification
+        if (aiSuggestion && aiSuggestion.confidence > 0.7 && aiSuggestion.category !== 'Other') return;
+
+        setIsTextClassifying(true);
+        try {
+            const res = await api.post('/complaints/classify-text', { title, description });
+            const result = res.data?.data;
+            if (result && result.confidence > 0.3) {
+                setTextAiSuggestion(result);
+
+                // Auto-update category if user is on "Other" and AI is confident
+                const suggestedKey = (result.suggestedCategory || '').toLowerCase();
+                const formCatId = aiCategoryMap[suggestedKey] || 'other';
+                if (selectedCategory === 'other' && formCatId !== 'other' && result.confidence >= 0.6) {
+                    setSelectedCategory(formCatId);
+                }
+            }
+        } catch (err) {
+            console.error('Text classification failed:', err);
+        } finally {
+            setIsTextClassifying(false);
+        }
     }
 
     function removePhoto() {
@@ -252,6 +500,8 @@ export default function ComplaintForm() {
         if (photoPreview) URL.revokeObjectURL(photoPreview);
         setPhotoPreview(null);
         setAiSuggestion(null);
+        setPhotoGps(null);
+        setPhotoDatetime(null);
         if (fileInputRef.current) fileInputRef.current.value = "";
     }
 
@@ -312,12 +562,19 @@ export default function ComplaintForm() {
                     if (res.data.data.duplicates && res.data.data.duplicates.length > 0) {
                         setDuplicates(res.data.data.duplicates);
                         setShowDuplicateModal(true);
-                        return; // Stop navigation
+                        return;
                     }
                 } catch (err) {
                     console.error("Duplicate check failed", err);
-                    // Continue anyway if check fails
                 }
+            }
+        }
+
+        // Step 2: Require photo before advancing
+        if (currentStep === 2) {
+            if (!photo) {
+                setError("Photo evidence is mandatory. Please upload a photo to continue.");
+                return;
             }
         }
 
@@ -336,11 +593,18 @@ export default function ComplaintForm() {
             setError("Please fill in title and description.");
             return;
         }
+        if (!photo) {
+            setError("Photo evidence is mandatory.");
+            return;
+        }
 
         setIsSubmitting(true);
         setError("");
 
         try {
+            // Compress and convert photo to base64
+            const photoBase64 = await compressAndConvertToBase64(photo);
+
             const categoryLabel = categories.find((c) => c.id === selectedCategory)?.label || selectedCategory;
             await api.post("/complaints", {
                 title,
@@ -349,12 +613,13 @@ export default function ComplaintForm() {
                 address,
                 latitude: coords?.lat || null,
                 longitude: coords?.lng || null,
+                photo_url: photoBase64,
                 is_public: shareToFeed,
                 is_anonymous: isAnonymous,
             });
             setIsSuccess(true);
         } catch (err: any) {
-            const message = err?.response?.data?.message || "Failed to submit report. Please try again.";
+            const message = err?.response?.data?.message || err?.message || "Failed to submit report. Please try again.";
             setError(message);
         } finally {
             setIsSubmitting(false);
@@ -370,6 +635,7 @@ export default function ComplaintForm() {
         setIsRecording(false);
         setPhoto(null);
         setPhotoPreview(null);
+        setPhotoGps(null);
         setIsSubmitting(false);
         setIsSuccess(false);
         setError("");
@@ -671,8 +937,8 @@ export default function ComplaintForm() {
                                         className="space-y-6"
                                     >
                                         <div>
-                                            <h2 className="text-xl font-semibold font-[family-name:var(--font-outfit)] mb-1">Upload Evidence</h2>
-                                            <p className="text-sm text-muted-foreground">Add photo or video proof to strengthen your report.</p>
+                                            <h2 className="text-xl font-semibold font-[family-name:var(--font-outfit)] mb-1">Upload Evidence <span className="text-red-500">*</span></h2>
+                                            <p className="text-sm text-muted-foreground">Photo proof is <strong>mandatory</strong> — this ensures report authenticity.</p>
                                         </div>
 
                                         {photoPreview ? (
@@ -692,26 +958,76 @@ export default function ComplaintForm() {
 
                                                 {!isAnalyzing && aiSuggestion && (
                                                     <div className="absolute bottom-4 left-4 right-4 z-10">
-                                                        <div className="bg-background/90 backdrop-blur-xl p-3 rounded-xl border border-primary/20 shadow-lg flex items-center gap-3">
-                                                            <div className="p-2 rounded-lg bg-primary/10 text-primary">
-                                                                <Brain className="size-5" />
+                                                        <div className={`backdrop-blur-xl p-3 rounded-xl shadow-lg flex items-center gap-3 ${aiSuggestion.isRelevant === false
+                                                            ? 'bg-amber-500/90 border border-amber-400/30'
+                                                            : 'bg-background/90 border border-primary/20'
+                                                            }`}>
+                                                            <div className={`p-2 rounded-lg ${aiSuggestion.isRelevant === false
+                                                                ? 'bg-white/20 text-white'
+                                                                : 'bg-primary/10 text-primary'
+                                                                }`}>
+                                                                {aiSuggestion.isRelevant === false ? (
+                                                                    <AlertTriangle className="size-5" />
+                                                                ) : (
+                                                                    <Brain className="size-5" />
+                                                                )}
                                                             </div>
                                                             <div className="flex-1">
-                                                                <p className="text-xs font-medium text-muted-foreground">AI Detected</p>
-                                                                <p className="text-sm font-semibold flex items-center gap-2">
-                                                                    {aiSuggestion.category.charAt(0).toUpperCase() + aiSuggestion.category.slice(1)} Issue
-                                                                    <span className="text-[10px] bg-red-500/10 text-red-500 px-1.5 py-0.5 rounded border border-red-500/20">
-                                                                        {aiSuggestion.severity} Severity
-                                                                    </span>
+                                                                <p className={`text-xs font-medium ${aiSuggestion.isRelevant === false ? 'text-white/80' : 'text-muted-foreground'
+                                                                    }`}>
+                                                                    {aiSuggestion.isRelevant === false ? 'Not a Civic Issue' : 'AI Detected'}
                                                                 </p>
+                                                                {aiSuggestion.isRelevant === false ? (
+                                                                    <p className="text-sm font-semibold text-white">
+                                                                        Please upload a photo of an actual civic issue
+                                                                    </p>
+                                                                ) : (
+                                                                    <p className="text-sm font-semibold flex items-center gap-2">
+                                                                        {aiSuggestion.category}
+                                                                        <span className={`text-[10px] px-1.5 py-0.5 rounded border ${aiSuggestion.severity === 'High' ? 'bg-red-500/10 text-red-500 border-red-500/20' :
+                                                                            aiSuggestion.severity === 'Medium' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
+                                                                                'bg-green-500/10 text-green-500 border-green-500/20'
+                                                                            }`}>
+                                                                            {aiSuggestion.severity} Severity
+                                                                        </span>
+                                                                    </p>
+                                                                )}
+                                                                {aiSuggestion.detectedIssue && (
+                                                                    <p className={`text-[11px] mt-0.5 line-clamp-1 ${aiSuggestion.isRelevant === false ? 'text-white/70' : 'text-muted-foreground'
+                                                                        }`}>{aiSuggestion.detectedIssue}</p>
+                                                                )}
                                                             </div>
-                                                            <div className="text-right">
-                                                                <span className="text-xs font-mono text-emerald-500">{(aiSuggestion.confidence * 100).toFixed(0)}%</span>
-                                                                <p className="text-[10px] text-muted-foreground">Confidence</p>
-                                                            </div>
+                                                            {aiSuggestion.isRelevant !== false && (
+                                                                <div className="text-right">
+                                                                    <span className="text-xs font-mono text-emerald-500">{(aiSuggestion.confidence * 100).toFixed(0)}%</span>
+                                                                    <p className="text-[10px] text-muted-foreground">Confidence</p>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 )}
+
+                                                {/* Photo metadata badges */}
+                                                <div className="absolute top-3 left-3 z-10 flex flex-col gap-1.5">
+                                                    {photoGps && (
+                                                        <div className="bg-emerald-500/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full flex items-center gap-1.5 text-xs font-medium shadow-lg">
+                                                            <MapPin className="size-3.5" />
+                                                            GPS: {photoGps.lat.toFixed(4)}, {photoGps.lng.toFixed(4)}
+                                                        </div>
+                                                    )}
+                                                    {photoDatetime && (
+                                                        <div className="bg-blue-500/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full flex items-center gap-1.5 text-xs font-medium shadow-lg">
+                                                            <Camera className="size-3.5" />
+                                                            Taken: {new Date(photoDatetime).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}
+                                                        </div>
+                                                    )}
+                                                    {!photoGps && !photoDatetime && photo && !isAnalyzing && (
+                                                        <div className="bg-amber-500/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full flex items-center gap-1.5 text-xs font-medium shadow-lg">
+                                                            <AlertTriangle className="size-3.5" />
+                                                            No metadata found in photo
+                                                        </div>
+                                                    )}
+                                                </div>
 
                                                 <button
                                                     type="button"
@@ -727,8 +1043,8 @@ export default function ComplaintForm() {
                                                 className="border-2 border-dashed border-border/30 rounded-xl h-48 flex flex-col items-center justify-center cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-all group"
                                             >
                                                 <Upload className="size-10 text-muted-foreground/50 mb-3 group-hover:text-primary group-hover:scale-110 transition-all" />
-                                                <p className="text-sm font-medium text-muted-foreground group-hover:text-primary/80">Click to upload photo or video</p>
-                                                <p className="text-xs text-muted-foreground/50 mt-1">AI will auto-detect category • Max 5 MB</p>
+                                                <p className="text-sm font-medium text-muted-foreground group-hover:text-primary/80">Click to upload photo evidence</p>
+                                                <p className="text-xs text-muted-foreground/50 mt-1">Required • GPS data extracted automatically • Max 5 MB</p>
                                                 <input
                                                     ref={fileInputRef}
                                                     type="file"
@@ -776,6 +1092,7 @@ export default function ComplaintForm() {
                                                     rows={5}
                                                     value={description}
                                                     onChange={(e) => setDescription(e.target.value)}
+                                                    onBlur={classifyFromText}
                                                     className="bg-card/50 border-border/30 resize-none pr-12 text-base focus-visible:ring-primary/50"
                                                     required
                                                 />
@@ -793,6 +1110,60 @@ export default function ComplaintForm() {
                                                 </button>
                                             </div>
                                         </div>
+
+                                        {/* AI Text Classification Suggestion */}
+                                        {isTextClassifying && (
+                                            <div className="flex items-center gap-2 p-3 rounded-xl bg-primary/5 border border-primary/20">
+                                                <Loader2 className="size-4 animate-spin text-primary" />
+                                                <span className="text-sm text-primary">AI is analyzing your description...</span>
+                                            </div>
+                                        )}
+                                        {textAiSuggestion && !isTextClassifying && (
+                                            <motion.div
+                                                initial={{ opacity: 0, y: -8 }}
+                                                animate={{ opacity: 1, y: 0 }}
+                                                className="p-3 rounded-xl border border-primary/20 bg-primary/5 space-y-2"
+                                            >
+                                                <div className="flex items-start gap-2">
+                                                    <Brain className="size-4 text-primary mt-0.5 shrink-0" />
+                                                    <div className="flex-1">
+                                                        <p className="text-sm font-medium text-primary">AI Classification</p>
+                                                        <p className="text-xs text-muted-foreground mt-0.5">{textAiSuggestion.explanation}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex flex-wrap items-center gap-2 ml-6">
+                                                    <span className={cn(
+                                                        "text-[11px] px-2.5 py-1 rounded-full font-medium border",
+                                                        textAiSuggestion.severity === 'Critical' ? 'text-rose-500 bg-rose-500/10 border-rose-500/20' :
+                                                            textAiSuggestion.severity === 'High' ? 'text-orange-500 bg-orange-500/10 border-orange-500/20' :
+                                                                textAiSuggestion.severity === 'Medium' ? 'text-amber-500 bg-amber-500/10 border-amber-500/20' :
+                                                                    'text-emerald-500 bg-emerald-500/10 border-emerald-500/20'
+                                                    )}>
+                                                        Severity: {textAiSuggestion.severity}
+                                                    </span>
+                                                    <span className="text-[11px] px-2.5 py-1 rounded-full font-medium border bg-primary/10 text-primary border-primary/20">
+                                                        Category: {textAiSuggestion.suggestedCategory}
+                                                    </span>
+                                                    <span className="text-[10px] text-muted-foreground">({Math.round(textAiSuggestion.confidence * 100)}% confidence)</span>
+                                                    {(() => {
+                                                        const suggestedKey = (textAiSuggestion.suggestedCategory || '').toLowerCase();
+                                                        const formCatId = aiCategoryMap[suggestedKey] || 'other';
+                                                        if (formCatId !== 'other' && selectedCategory !== formCatId) {
+                                                            return (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setSelectedCategory(formCatId)}
+                                                                    className="text-[11px] px-2.5 py-1 rounded-full font-medium bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                                                                >
+                                                                    Apply suggestion
+                                                                </button>
+                                                            );
+                                                        }
+                                                        return null;
+                                                    })()}
+                                                </div>
+                                            </motion.div>
+                                        )}
 
                                         {/* Community Sharing */}
                                         <div className="space-y-3 pt-2">

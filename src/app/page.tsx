@@ -138,7 +138,7 @@ export default function Home() {
               { href: "/map", label: "Issue Map", icon: Map, color: "text-teal-500", bg: "bg-teal-500/10" },
               { href: "/community-voting", label: "Community Voting", icon: Vote, color: "text-indigo-500", bg: "bg-indigo-500/10" },
               { href: "/sos", label: "SOS Emergency", icon: Siren, color: "text-rose-500", bg: "bg-rose-500/10" },
-              { href: "/nearby", label: "Nearby Services", icon: Building2, color: "text-cyan-500", bg: "bg-cyan-500/10" },
+              { href: "/nearby-services", label: "Nearby Services", icon: Building2, color: "text-cyan-500", bg: "bg-cyan-500/10" },
             ].map((item, i) => (
               <motion.div
                 key={item.href}

@@ -1,353 +1,361 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { motion } from "framer-motion";
 import {
-    TrendingUp,
-    AlertTriangle,
-    CheckCircle2,
-    MoreHorizontal,
-    MapPin,
-    ArrowUpCircle,
-    Clock,
-    Copy,
-    Camera,
-    Eye,
-    Merge,
-    Timer,
-    FileCheck,
-    Loader2,
-    Filter,
+    TrendingUp, AlertTriangle, CheckCircle2, MapPin, ArrowUpCircle,
+    Clock, Camera, Eye, Timer, Loader2, Activity, Shield, Zap,
+    BarChart3, ChevronRight, Radio, Users, Siren, FileText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow
-} from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger
-} from "@/components/ui/dropdown-menu";
 import api from "@/lib/api";
-import StatusBadge from "@/components/status-badge";
 import Link from "next/link";
 
+/* ── Helpers ── */
+function getTimeAgo(dateStr: string) {
+    const diff = Date.now() - new Date(dateStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "Just now";
+    if (mins < 60) return `${mins}m ago`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+}
+
+function getPriorityConfig(score: number) {
+    if (score > 80) return { label: "CRITICAL", color: "#C0392B", bg: "#FDEDEC", border: "#E6B0AA" };
+    if (score > 60) return { label: "HIGH", color: "#D4880F", bg: "#FEF5E7", border: "#F9E79F" };
+    if (score > 40) return { label: "MEDIUM", color: "#2874A6", bg: "#EBF5FB", border: "#AED6F1" };
+    return { label: "LOW", color: "#1E8449", bg: "#EAFAF1", border: "#A9DFBF" };
+}
+
+function getStatusConfig(status: string) {
+    const s = status?.toLowerCase();
+    if (s === "resolved" || s === "closed") return { label: "RESOLVED", color: "#1E8449", bg: "#EAFAF1" };
+    if (s === "in progress" || s === "in_progress") return { label: "IN PROGRESS", color: "#2874A6", bg: "#EBF5FB" };
+    if (s === "assigned") return { label: "ASSIGNED", color: "#7D3C98", bg: "#F5EEF8" };
+    return { label: "SUBMITTED", color: "#D4880F", bg: "#FEF5E7" };
+}
+
 export default function AdminDashboard() {
-    const [stats, setStats] = useState({
-        total: 0,
-        pending: 0,
-        resolved: 0,
-        critical: 0
-    });
-    const [recentReports, setRecentReports] = useState<any[]>([]);
+    const [complaints, setComplaints] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
-    const [selectedDept, setSelectedDept] = useState("All");
-
     useEffect(() => {
-        async function fetchData() {
+        (async () => {
             try {
                 const res = await api.get("/complaints");
-                const allData = res.data?.data?.complaints || [];
+                setComplaints(res.data?.data?.complaints || []);
+            } catch (e) { console.error("Fetch failed", e); }
+            finally { setLoading(false); }
+        })();
+    }, []);
 
-                // Filter by Department
-                const data = selectedDept === "All"
-                    ? allData
-                    : allData.filter((c: any) => c.department === selectedDept);
+    const total = complaints.length;
+    const critical = complaints.filter(c => (c.priority_score || 0) > 80 && !["Resolved", "resolved", "Closed"].includes(c.status)).length;
+    const resolved = complaints.filter(c => ["Resolved", "resolved", "Closed"].includes(c.status)).length;
+    const inProgress = complaints.filter(c => c.status === "In Progress" || c.status === "in_progress").length;
+    const pending = complaints.filter(c => ["Submitted", "submitted", "Assigned", "assigned"].includes(c.status)).length;
 
-                setStats({
-                    total: data.length,
-                    pending: data.filter((c: any) => c.status === "Submitted" || c.status === "submitted").length,
-                    resolved: data.filter((c: any) => c.status === "Resolved" || c.status === "resolved").length,
-                    critical: data.filter((c: any) => (c.priority_score || c.priority) > 80).length
-                });
+    const slaBreach = complaints.filter(c => {
+        if (["Resolved", "resolved", "Closed"].includes(c.status)) return false;
+        if (c.sla_deadline) return new Date(c.sla_deadline).getTime() < Date.now() + 86400000;
+        return (Date.now() - new Date(c.created_at).getTime()) / 86400000 > 2;
+    }).length;
 
-                setRecentReports(data.slice(0, 10));
-            } catch (e) {
-                console.error("Failed to fetch admin data", e);
-            } finally {
-                setLoading(false);
-            }
-        }
-        fetchData();
-    }, [selectedDept]);
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const resolvedToday = complaints.filter(c =>
+        ["Resolved", "resolved", "Closed"].includes(c.status) && c.updated_at && new Date(c.updated_at) >= todayStart
+    ).length;
 
-    // Mock duplicate clusters for UI
-    const duplicateClusters = [
-        {
-            id: "dup-1",
-            title: "Road Damage — MG Road Area",
-            count: 4,
-            priority: 92,
-            reports: ["#a3b1", "#c2d3", "#e4f5", "#g6h7"],
-        },
-        {
-            id: "dup-2",
-            title: "Water Leak — Sector 21",
-            count: 3,
-            priority: 78,
-            reports: ["#j8k9", "#l0m1", "#n2o3"],
-        },
-    ];
+    const resolutionRate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+
+    const recentTickets = [...complaints]
+        .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+        .slice(0, 12);
+
+    const escalations = complaints
+        .filter(c => !["Resolved", "resolved", "Closed"].includes(c.status) && (Date.now() - new Date(c.created_at).getTime()) / 86400000 > 3)
+        .sort((a, b) => (b.priority_score || 50) - (a.priority_score || 50))
+        .slice(0, 6);
+
+    const catMap: Record<string, number> = {};
+    complaints.forEach(c => { const cat = c.category || "General"; catMap[cat] = (catMap[cat] || 0) + 1; });
+    const topCats = Object.entries(catMap).sort((a, b) => b[1] - a[1]).slice(0, 6);
+
+    const proofItems = complaints
+        .filter(c => ["Resolved", "resolved", "Closed"].includes(c.status))
+        .sort((a, b) => new Date(b.updated_at || b.created_at).getTime() - new Date(a.updated_at || a.created_at).getTime())
+        .slice(0, 5);
+
+    if (loading) {
+        return (
+            <div className="flex items-center justify-center h-80">
+                <div className="text-center space-y-3">
+                    <Loader2 className="size-8 animate-spin mx-auto" style={{ color: "#C0392B" }} />
+                    <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#B8860B" }}>Loading Operational Data...</p>
+                </div>
+            </div>
+        );
+    }
 
     return (
-        <div className="space-y-8">
-            {/* Header */}
-            {/* Header */}
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h1 className="text-3xl font-bold font-[family-name:var(--font-outfit)] tracking-tight">
-                        Admin <span className="gradient-text">Overview</span>
-                    </h1>
-                    <p className="text-muted-foreground">Manage tickets, escalations, and proof verification.</p>
+        <div className="space-y-4">
+
+            {/* ═══ STRATEGIC OVERVIEW METRICS ═══ */}
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                <MetricCard label="TOTAL ACTIVE" value={total - resolved} sub={`${total} all-time`} color="#8B1A1A" icon={Activity} />
+                <MetricCard label="CRITICAL INCIDENTS" value={critical} sub={critical > 0 ? "Immediate attention" : "None active"} color="#C0392B" icon={Siren} alert={critical > 0} />
+                <MetricCard label="SLA BREACH RISK" value={slaBreach} sub="Approaching deadline" color="#D4880F" icon={Timer} />
+                <MetricCard label="RESOLVED TODAY" value={resolvedToday} sub={`${resolutionRate}% overall rate`} color="#1E8449" icon={CheckCircle2} />
+                <MetricCard label="IN PROGRESS" value={inProgress} sub={`${pending} awaiting action`} color="#2874A6" icon={BarChart3} />
+            </div>
+
+            {/* ═══ MAIN OPERATIONS GRID ═══ */}
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-3">
+
+                {/* LEFT: Ticket Queue (60%) */}
+                <div className="lg:col-span-3 bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <div className="flex items-center gap-2">
+                            <Shield className="size-4" style={{ color: "#8B1A1A" }} />
+                            <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Ticket Queue</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <span className="text-[10px] font-semibold tabular-nums px-2 py-0.5 rounded-sm" style={{ background: "#FEF5E7", color: "#B8860B" }}>
+                                {recentTickets.length} entries
+                            </span>
+                            <Link href="/admin/complaints" className="text-[10px] uppercase tracking-wider font-bold flex items-center gap-0.5" style={{ color: "#8B1A1A" }}>
+                                View All <ChevronRight className="size-3" />
+                            </Link>
+                        </div>
+                    </div>
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                            <thead>
+                                <tr style={{ background: "#FAF5F0" }}>
+                                    <th className="text-left px-4 py-2 text-[10px] uppercase tracking-wider font-semibold text-stone-400">Priority</th>
+                                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider font-semibold text-stone-400">Complaint</th>
+                                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider font-semibold text-stone-400">Status</th>
+                                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider font-semibold text-stone-400">Age</th>
+                                    <th className="text-left px-3 py-2 text-[10px] uppercase tracking-wider font-semibold text-stone-400">Location</th>
+                                    <th className="text-right px-4 py-2"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {recentTickets.map((t) => {
+                                    const pri = getPriorityConfig(t.priority_score || 50);
+                                    const st = getStatusConfig(t.status);
+                                    const daysOld = Math.floor((Date.now() - new Date(t.created_at).getTime()) / 86400000);
+                                    return (
+                                        <tr key={t.id} className="border-t hover:bg-stone-50/50 transition-colors" style={{ borderColor: "#F0E8E0" }}>
+                                            <td className="px-4 py-2">
+                                                <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-sm border" style={{ color: pri.color, background: pri.bg, borderColor: pri.border }}>
+                                                    {pri.label}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                <p className="text-xs font-medium text-stone-800 truncate max-w-[200px]">{t.title}</p>
+                                                <p className="text-[10px] font-mono text-stone-400">#{String(t.id).slice(-8)}</p>
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                <span className="text-[9px] font-bold uppercase px-2 py-0.5 rounded-sm" style={{ color: st.color, background: st.bg }}>
+                                                    {st.label}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-2">
+                                                <span className={cn("text-[11px] font-mono tabular-nums", daysOld > 3 ? "text-red-600 font-bold" : "text-stone-500")}>
+                                                    {daysOld > 0 ? `${daysOld}d` : getTimeAgo(t.created_at)}
+                                                </span>
+                                            </td>
+                                            <td className="px-3 py-2 text-[11px] text-stone-400 max-w-[120px] truncate">
+                                                {t.address ? <span className="flex items-center gap-1"><MapPin className="size-3 shrink-0" />{t.address.split(",")[0]}</span> : "—"}
+                                            </td>
+                                            <td className="px-4 py-2 text-right">
+                                                <Link href={`/admin/complaints/${t.id}`} className="text-[10px] uppercase tracking-wider font-bold" style={{ color: "#8B1A1A" }}>
+                                                    Open
+                                                </Link>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
 
-                <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                        <Button variant="outline" className="gap-2 min-w-[150px] justify-between">
-                            {selectedDept} Department
-                            <Filter className="size-4 opacity-50" />
-                        </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                        {["All", "Roads", "Waste", "Water", "Electricity", "Parks", "Traffic"].map(dept => (
-                            <DropdownMenuItem key={dept} onClick={() => setSelectedDept(dept)}>
-                                {dept}
-                            </DropdownMenuItem>
-                        ))}
-                    </DropdownMenuContent>
-                </DropdownMenu>
-            </div>
-
-            {/* Stats Grid */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-                <StatCard title="Total Reports" value={stats.total} icon={TrendingUp} description="All-time submissions" />
-                <StatCard title="Pending Review" value={stats.pending} icon={Clock} description="Requires attention" alert={stats.pending > 10} />
-                <StatCard title="Issues Resolved" value={stats.resolved} icon={CheckCircle2} description="Successfully closed" />
-                <StatCard title="Critical Issues" value={stats.critical} icon={AlertTriangle} description="High priority" critical />
-            </div>
-
-            {/* Ticket Queue Table */}
-            <Card className="glass-card border-border/20">
-                <CardHeader className="flex flex-row items-center justify-between">
-                    <CardTitle className="flex items-center gap-2">
-                        <FileCheck className="size-5 text-primary" />
-                        Ticket Queue
-                    </CardTitle>
-                    <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">
-                        {recentReports.length} tickets
-                    </Badge>
-                </CardHeader>
-                <CardContent>
-                    <Table>
-                        <TableHeader>
-                            <TableRow className="hover:bg-transparent border-border/20">
-                                <TableHead>ID</TableHead>
-                                <TableHead>Title</TableHead>
-                                <TableHead>Status</TableHead>
-                                <TableHead>Priority</TableHead>
-                                <TableHead>Escalation</TableHead>
-                                <TableHead>Location</TableHead>
-                                <TableHead className="text-right">Actions</TableHead>
-                            </TableRow>
-                        </TableHeader>
-                        <TableBody>
-                            {loading ? (
-                                <TableRow>
-                                    <TableCell colSpan={7} className="h-24 text-center">
-                                        <Loader2 className="size-5 animate-spin mx-auto text-primary" />
-                                    </TableCell>
-                                </TableRow>
-                            ) : recentReports.length === 0 ? (
-                                <TableRow>
-                                    <TableCell colSpan={7} className="h-24 text-center text-muted-foreground">
-                                        No tickets in queue
-                                    </TableCell>
-                                </TableRow>
-                            ) : recentReports.map((report: any) => {
-                                const score = report.priority_score || 50;
-                                const daysOld = Math.floor((Date.now() - new Date(report.created_at || Date.now()).getTime()) / 86400000);
-                                const shouldEscalate = daysOld > 3 && report.status !== "Resolved" && report.status !== "resolved";
-                                return (
-                                    <TableRow key={report.id} className="hover:bg-card/30 border-border/10">
-                                        <TableCell className="font-mono text-xs text-muted-foreground">
-                                            #{String(report.id).substring(0, 8)}
-                                        </TableCell>
-                                        <TableCell className="font-medium max-w-[200px] truncate">{report.title}</TableCell>
-                                        <TableCell>
-                                            <StatusBadge status={report.status} />
-                                        </TableCell>
-                                        <TableCell>
+                {/* RIGHT: Live Feed (40%) */}
+                <div className="lg:col-span-2 bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <div className="flex items-center gap-2">
+                            <Radio className="size-4 text-red-500 animate-pulse" />
+                            <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Active Incidents — Live</span>
+                        </div>
+                    </div>
+                    <div className="overflow-y-auto" style={{ maxHeight: "420px" }}>
+                        {recentTickets.slice(0, 10).map((t) => {
+                            const pri = getPriorityConfig(t.priority_score || 50);
+                            const st = getStatusConfig(t.status);
+                            return (
+                                <Link key={t.id} href={`/admin/complaints/${t.id}`}>
+                                    <div className="px-4 py-2.5 border-b hover:bg-stone-50 transition-colors cursor-pointer" style={{ borderColor: "#F0E8E0" }}>
+                                        <div className="flex items-center justify-between mb-1">
                                             <div className="flex items-center gap-2">
-                                                <div className="h-1.5 w-14 bg-muted/30 rounded-full overflow-hidden">
-                                                    <div
-                                                        className={cn("h-full rounded-full", score > 70 ? "bg-rose-500" : score > 40 ? "bg-amber-500" : "bg-emerald-500")}
-                                                        style={{ width: `${score}%` }}
-                                                    />
-                                                </div>
-                                                <span className="text-xs text-muted-foreground tabular-nums">{score}</span>
+                                                <div className="size-2 rounded-full" style={{ background: pri.color }} />
+                                                <span className="text-[10px] font-mono text-stone-400">{getTimeAgo(t.created_at)}</span>
                                             </div>
-                                        </TableCell>
-                                        <TableCell>
-                                            {shouldEscalate ? (
-                                                <Badge className="bg-rose-500/10 text-rose-500 border-rose-500/20 text-[10px] gap-1">
-                                                    <ArrowUpCircle className="size-3" />
-                                                    Escalate ({daysOld}d)
-                                                </Badge>
-                                            ) : (
-                                                <Badge variant="outline" className="text-[10px] text-muted-foreground border-border/30 gap-1">
-                                                    <Timer className="size-3" />
-                                                    {daysOld}d
-                                                </Badge>
-                                            )}
-                                        </TableCell>
-                                        <TableCell className="text-muted-foreground text-xs">
-                                            <div className="flex items-center gap-1">
-                                                <MapPin className="size-3" />
-                                                {report.address || "Unknown"}
-                                            </div>
-                                        </TableCell>
-                                        <TableCell className="text-right">
-                                            <DropdownMenu>
-                                                <DropdownMenuTrigger asChild>
-                                                    <Button variant="ghost" className="h-8 w-8 p-0">
-                                                        <MoreHorizontal className="h-4 w-4" />
-                                                    </Button>
-                                                </DropdownMenuTrigger>
-                                                <DropdownMenuContent align="end" className="glass-card">
-                                                    <DropdownMenuItem asChild>
-                                                        <Link href={`/admin/complaints/${report.id}`}>
-                                                            <Eye className="mr-2 size-4" /> View Details
-                                                        </Link>
-                                                    </DropdownMenuItem>
-                                                    <DropdownMenuItem>
-                                                        <ArrowUpCircle className="mr-2 size-4" /> Escalate
-                                                    </DropdownMenuItem>
-                                                    <DropdownMenuItem>
-                                                        <CheckCircle2 className="mr-2 size-4" /> Mark Resolved
-                                                    </DropdownMenuItem>
-                                                    <DropdownMenuItem className="text-destructive">
-                                                        <AlertTriangle className="mr-2 size-4" /> Delete
-                                                    </DropdownMenuItem>
-                                                </DropdownMenuContent>
-                                            </DropdownMenu>
-                                        </TableCell>
-                                    </TableRow>
-                                );
-                            })}
-                        </TableBody>
-                    </Table>
-                </CardContent>
-            </Card>
-
-            {/* Two Column: Duplicates + Proof Verification */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Duplicate Issue Merge Tool */}
-                <Card className="glass-card border-border/20">
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-lg">
-                            <Copy className="size-5 text-primary" />
-                            Duplicate Detection
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        {duplicateClusters.map((cluster) => (
-                            <div key={cluster.id} className="p-4 rounded-xl border border-border/20 bg-card/30 space-y-3">
-                                <div className="flex items-start justify-between">
-                                    <div>
-                                        <h4 className="font-medium text-sm">{cluster.title}</h4>
-                                        <p className="text-xs text-muted-foreground mt-0.5">
-                                            {cluster.count} similar reports detected
-                                        </p>
+                                            <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-sm" style={{ color: st.color, background: st.bg }}>
+                                                {st.label}
+                                            </span>
+                                        </div>
+                                        <p className="text-xs font-medium text-stone-700 truncate">{t.title}</p>
+                                        <div className="flex items-center gap-3 mt-1">
+                                            <span className="text-[10px] text-stone-400">{t.category || "General"}</span>
+                                            {t.address && <span className="text-[10px] text-stone-300 truncate flex items-center gap-0.5"><MapPin className="size-2.5" />{t.address.split(",")[0]}</span>}
+                                        </div>
                                     </div>
-                                    <Badge className="bg-amber-500/10 text-amber-500 border-amber-500/20 text-[10px]">
-                                        Priority: {cluster.priority}
-                                    </Badge>
-                                </div>
-                                <div className="flex items-center gap-1 flex-wrap">
-                                    {cluster.reports.map(r => (
-                                        <span key={r} className="text-[10px] font-mono bg-muted/30 px-2 py-0.5 rounded-full text-muted-foreground">
-                                            {r}
-                                        </span>
-                                    ))}
-                                </div>
-                                <Button size="sm" variant="outline" className="w-full rounded-lg text-xs gap-1.5">
-                                    <Merge className="size-3.5" />
-                                    Merge Duplicates
-                                </Button>
-                            </div>
-                        ))}
-                        {duplicateClusters.length === 0 && (
-                            <p className="text-sm text-muted-foreground text-center py-6">No duplicate clusters detected.</p>
-                        )}
-                    </CardContent>
-                </Card>
+                                </Link>
+                            );
+                        })}
+                    </div>
+                    <div className="px-4 py-2.5 border-t flex gap-2" style={{ borderColor: "#E8DDD4" }}>
+                        <Link href="/admin/complaints" className="flex-1 text-center text-[10px] font-bold uppercase tracking-wider py-1.5 rounded-sm border hover:bg-stone-50 transition-colors" style={{ borderColor: "#E8DDD4", color: "#5D4037" }}>
+                            View All
+                        </Link>
+                        <Link href="/admin/complaints" className="flex-1 text-center text-[10px] font-bold uppercase tracking-wider py-1.5 rounded-sm border hover:bg-stone-50 transition-colors" style={{ borderColor: "#E8DDD4", color: "#D4880F" }}>
+                            Escalation Queue
+                        </Link>
+                    </div>
+                </div>
+            </div>
 
-                {/* Proof Verification */}
-                <Card className="glass-card border-border/20">
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2 text-lg">
-                            <Camera className="size-5 text-primary" />
-                            Proof Verification
-                        </CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-4">
-                        {/* Mock proof items */}
-                        {[
-                            { id: "pv-1", title: "Pothole on NH-48", type: "Resolution Photo", status: "pending" },
-                            { id: "pv-2", title: "Broken Street Light #42", type: "Before/After", status: "verified" },
-                            { id: "pv-3", title: "Garbage Dump — Block C", type: "Resolution Photo", status: "pending" },
-                        ].map((item) => (
-                            <div key={item.id} className="flex items-center gap-4 p-3 rounded-xl border border-border/20 bg-card/30">
-                                <div className="size-12 rounded-lg bg-muted/30 flex items-center justify-center shrink-0">
-                                    <Camera className="size-5 text-muted-foreground/50" />
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-sm font-medium truncate">{item.title}</p>
-                                    <p className="text-[11px] text-muted-foreground">{item.type}</p>
-                                </div>
-                                {item.status === "verified" ? (
-                                    <Badge className="bg-emerald-500/10 text-emerald-500 border-emerald-500/20 text-[10px] gap-1">
-                                        <CheckCircle2 className="size-3" /> Verified
-                                    </Badge>
-                                ) : (
-                                    <Button size="sm" variant="outline" className="text-xs rounded-lg gap-1">
-                                        <Eye className="size-3.5" /> Review
-                                    </Button>
-                                )}
+            {/* ═══ TACTICAL ANALYTICS FOOTER ═══ */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+
+                {/* Escalation Alerts */}
+                <div className="bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <div className="flex items-center gap-2">
+                            <ArrowUpCircle className="size-4 text-red-600" />
+                            <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Escalation Alerts</span>
+                        </div>
+                        <span className="text-[10px] font-bold tabular-nums px-2 py-0.5 rounded-sm" style={{ background: "#FDEDEC", color: "#C0392B" }}>
+                            {escalations.length}
+                        </span>
+                    </div>
+                    <div>
+                        {escalations.length === 0 ? (
+                            <div className="px-4 py-8 text-center">
+                                <CheckCircle2 className="size-6 mx-auto mb-2" style={{ color: "#1E8449" }} />
+                                <p className="text-xs text-stone-400 uppercase tracking-wider">No Overdue Complaints</p>
                             </div>
+                        ) : escalations.map(c => {
+                            const days = Math.floor((Date.now() - new Date(c.created_at).getTime()) / 86400000);
+                            return (
+                                <Link key={c.id} href={`/admin/complaints/${c.id}`}>
+                                    <div className="px-4 py-2.5 hover:bg-stone-50 transition-colors flex items-center gap-3 border-t" style={{ borderColor: "#F0E8E0" }}>
+                                        <AlertTriangle className="size-3.5 text-red-500 shrink-0" />
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs font-medium text-stone-700 truncate">{c.title}</p>
+                                            <p className="text-[10px] text-stone-400">{c.category || "General"} • {days}d overdue</p>
+                                        </div>
+                                        <span className="text-[10px] font-mono font-bold tabular-nums text-red-600">{c.priority_score || 50}</span>
+                                    </div>
+                                </Link>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Category Distribution */}
+                <div className="bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <div className="flex items-center gap-2">
+                            <BarChart3 className="size-4" style={{ color: "#8B1A1A" }} />
+                            <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Category Distribution</span>
+                        </div>
+                    </div>
+                    <div className="px-4 py-3 space-y-2.5">
+                        {topCats.map(([cat, count]) => {
+                            const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                            return (
+                                <div key={cat}>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <span className="text-[11px] font-semibold text-stone-600 uppercase tracking-wider">{cat}</span>
+                                        <span className="text-[10px] font-mono text-stone-400 tabular-nums">{count} ({pct}%)</span>
+                                    </div>
+                                    <div className="h-1.5 rounded-sm overflow-hidden" style={{ background: "#F0E8E0" }}>
+                                        <div className="h-full rounded-sm transition-all duration-700" style={{ width: `${pct}%`, background: "linear-gradient(90deg, #C0392B, #8B1A1A)" }} />
+                                    </div>
+                                </div>
+                            );
+                        })}
+                        {topCats.length === 0 && (
+                            <p className="text-xs text-stone-400 text-center py-4">No data available</p>
+                        )}
+                    </div>
+                </div>
+
+                {/* Resolution Verification */}
+                <div className="bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center justify-between px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <div className="flex items-center gap-2">
+                            <Camera className="size-4" style={{ color: "#1E8449" }} />
+                            <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Resolution Verification</span>
+                        </div>
+                        <span className="text-[10px] font-bold tabular-nums px-2 py-0.5 rounded-sm" style={{ background: "#EAFAF1", color: "#1E8449" }}>
+                            {proofItems.length}
+                        </span>
+                    </div>
+                    <div>
+                        {proofItems.length === 0 ? (
+                            <div className="px-4 py-8 text-center">
+                                <Camera className="size-6 text-stone-300 mx-auto mb-2" />
+                                <p className="text-xs text-stone-400 uppercase tracking-wider">No Resolved Complaints</p>
+                            </div>
+                        ) : proofItems.map(c => (
+                            <Link key={c.id} href={`/admin/complaints/${c.id}`}>
+                                <div className="px-4 py-2.5 hover:bg-stone-50 transition-colors flex items-center gap-3 border-t" style={{ borderColor: "#F0E8E0" }}>
+                                    {c.resolution_photo_url ? (
+                                        <div className="size-8 rounded-sm overflow-hidden shrink-0 border" style={{ borderColor: "#E8DDD4" }}>
+                                            <img src={c.resolution_photo_url} alt="" className="size-full object-cover" />
+                                        </div>
+                                    ) : (
+                                        <div className="size-8 rounded-sm flex items-center justify-center shrink-0" style={{ background: "#FAF5F0" }}>
+                                            <Camera className="size-3.5 text-stone-300" />
+                                        </div>
+                                    )}
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-xs font-medium text-stone-700 truncate">{c.title}</p>
+                                        <p className="text-[10px] text-stone-400">{c.resolution_photo_url ? "Photo verified" : "No proof"} • {getTimeAgo(c.updated_at || c.created_at)}</p>
+                                    </div>
+                                    {c.resolution_photo_url ? (
+                                        <CheckCircle2 className="size-3.5 shrink-0" style={{ color: "#1E8449" }} />
+                                    ) : (
+                                        <span className="text-[9px] font-bold uppercase px-1.5 py-0.5 rounded-sm" style={{ color: "#D4880F", background: "#FEF5E7" }}>Pending</span>
+                                    )}
+                                </div>
+                            </Link>
                         ))}
-                    </CardContent>
-                </Card>
+                    </div>
+                </div>
             </div>
         </div>
     );
 }
 
-function StatCard({ title, value, icon: Icon, description, alert, critical }: any) {
+/* ── Metric Card ── */
+function MetricCard({ label, value, sub, color, icon: Icon, alert }: {
+    label: string; value: number; sub: string; color: string; icon: any; alert?: boolean;
+}) {
     return (
-        <Card className="glass-card border-border/20">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">
-                    {title}
-                </CardTitle>
-                <Icon className={cn("h-4 w-4 text-muted-foreground", critical && "text-rose-500", alert && "text-amber-500")} />
-            </CardHeader>
-            <CardContent>
-                <div className="text-2xl font-bold">{value}</div>
-                <p className="text-xs text-muted-foreground">
-                    {description}
-                </p>
-            </CardContent>
-        </Card>
+        <div className="bg-white rounded-sm border px-4 py-3 shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+            <div className="flex items-center justify-between mb-2">
+                <Icon className="size-4" style={{ color }} />
+                {alert && <div className="size-2 rounded-full animate-pulse" style={{ background: color }} />}
+            </div>
+            <p className="text-2xl font-bold tabular-nums tracking-tight" style={{ color: "#3D2B1F" }}>{value}</p>
+            <p className="text-[10px] font-bold uppercase tracking-wider mt-1" style={{ color }}>{label}</p>
+            <p className="text-[10px] text-stone-400 mt-0.5">{sub}</p>
+        </div>
     );
 }

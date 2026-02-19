@@ -1,233 +1,300 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect } from "react";
 import {
     FileText, Download, Printer, Calendar, BarChart3, PieChart, TrendingUp,
-    MapPin, AlertTriangle, Loader2
+    AlertTriangle, Loader2, CheckCircle2, Clock, ArrowUpRight, ArrowDownRight,
+    Shield, Users,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import api from "@/lib/api";
 
 export default function ReportsPage() {
+    const [complaints, setComplaints] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [stats, setStats] = useState<any>(null);
-    const [analytics, setAnalytics] = useState<any>(null);
-    const printRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        async function fetchData() {
+        (async () => {
             try {
-                const [statsRes, analyticsRes] = await Promise.all([
-                    api.get("/complaints/stats"),
-                    api.get("/complaints/analytics?period=30")
-                ]);
-                setStats(statsRes.data?.data);
-                setAnalytics(analyticsRes.data?.data);
-            } catch (err) {
-                console.error("Failed to fetch report data", err);
-            } finally {
-                setLoading(false);
-            }
-        }
-        fetchData();
+                const res = await api.get("/complaints");
+                setComplaints(res.data?.data?.complaints || []);
+            } catch (e) { console.error("Fetch failed", e); }
+            finally { setLoading(false); }
+        })();
     }, []);
 
-    const handlePrint = () => {
-        window.print();
-    };
+    function handlePrint() { window.print(); }
+
+    function exportCSV() {
+        const rows = complaints.map(c => ({
+            ID: c.id, Title: c.title, Status: c.status, Category: c.category || "General",
+            Priority: c.priority_score || 50, Address: c.address || "", Created: c.created_at,
+        }));
+        const header = Object.keys(rows[0] || {}).join(",");
+        const csv = [header, ...rows.map(r => Object.values(r).map(v => `"${String(v).replace(/"/g, '""')}"`).join(","))].join("\n");
+        const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+        a.download = `executive_report_${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    }
+
+    // Stats
+    const total = complaints.length;
+    const resolved = complaints.filter(c => ["Resolved", "resolved", "Closed"].includes(c.status)).length;
+    const open = complaints.filter(c => !["Resolved", "resolved", "Closed"].includes(c.status)).length;
+    const escalated = complaints.filter(c => (c.priority_score || 0) > 80 && !["Resolved", "resolved", "Closed"].includes(c.status)).length;
+    const resolutionRate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+    const avgResTime = resolved > 0 ? Math.round(
+        complaints.filter(c => ["Resolved", "resolved", "Closed"].includes(c.status) && c.updated_at)
+            .reduce((sum, c) => sum + (new Date(c.updated_at).getTime() - new Date(c.created_at).getTime()) / 86400000, 0) / resolved
+    ) : 0;
+
+    // Category distribution
+    const catMap: Record<string, number> = {};
+    complaints.forEach(c => { const cat = c.category || "General"; catMap[cat] = (catMap[cat] || 0) + 1; });
+    const catData = Object.entries(catMap).sort((a, b) => b[1] - a[1]);
+
+    // Monthly trend (last 6 months)
+    const monthMap: Record<string, { total: number; resolved: number }> = {};
+    const now = new Date();
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const key = d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+        monthMap[key] = { total: 0, resolved: 0 };
+    }
+    complaints.forEach(c => {
+        const d = new Date(c.created_at);
+        const key = d.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+        if (monthMap[key]) monthMap[key].total++;
+        if (["Resolved", "resolved", "Closed"].includes(c.status)) {
+            const ud = new Date(c.updated_at || c.created_at);
+            const uk = ud.toLocaleDateString("en-IN", { month: "short", year: "2-digit" });
+            if (monthMap[uk]) monthMap[uk].resolved++;
+        }
+    });
+    const monthData = Object.entries(monthMap);
+    const maxMonthVal = Math.max(...monthData.map(([, v]) => v.total), 1);
+
+    // Status breakdown
+    const statusMap: Record<string, number> = {};
+    complaints.forEach(c => { const s = c.status || "Submitted"; statusMap[s] = (statusMap[s] || 0) + 1; });
+
+    const catColors = ["#C0392B", "#D4880F", "#2874A6", "#1E8449", "#7D3C98", "#5D6D7E", "#B8860B", "#A93226"];
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-96">
-                <Loader2 className="size-8 animate-spin text-primary" />
+            <div className="flex items-center justify-center h-80">
+                <div className="text-center space-y-3">
+                    <Loader2 className="size-8 animate-spin mx-auto" style={{ color: "#C0392B" }} />
+                    <p className="text-xs font-semibold uppercase tracking-widest" style={{ color: "#B8860B" }}>Generating Executive Report...</p>
+                </div>
             </div>
         );
     }
 
-    const currentDate = new Date().toLocaleDateString("en-IN", {
-        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
-    });
-
     return (
-        <div className="space-y-8">
-            {/* Header - Hidden in Print */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 print:hidden">
+        <div className="space-y-4">
+
+            {/* Page Header */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                    <h1 className="text-3xl font-bold font-[family-name:var(--font-outfit)]">Smart Reports</h1>
-                    <p className="text-muted-foreground">Generate and download insights for administrative review.</p>
+                    <h1 className="text-lg font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Executive Reports</h1>
+                    <p className="text-[11px] text-stone-400 uppercase tracking-wider">Rajasthan Civic Operations • Ministerial Brief</p>
                 </div>
-                <div className="flex gap-3">
-                    <Button variant="outline" onClick={handlePrint}>
-                        <Printer className="mr-2 size-4" /> Print Report
-                    </Button>
-                    <Button onClick={handlePrint} className="bg-primary hover:bg-primary/90">
-                        <Download className="mr-2 size-4" /> Download PDF
-                    </Button>
+                <div className="flex items-center gap-2">
+                    <button onClick={handlePrint} className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-sm border bg-white hover:bg-stone-50 transition-colors shadow-sm" style={{ borderColor: "#E8DDD4", color: "#5D4037" }}>
+                        <Printer className="size-3" /> Print Report
+                    </button>
+                    <button onClick={exportCSV} className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-sm border bg-white hover:bg-stone-50 transition-colors shadow-sm" style={{ borderColor: "#E8DDD4", color: "#5D4037" }}>
+                        <Download className="size-3" /> Download CSV
+                    </button>
                 </div>
             </div>
 
-            {/* Printable Report Content */}
-            <div ref={printRef} className="print:p-0 space-y-8" id="printable-area">
+            {/* Executive Summary Bar */}
+            <div className="bg-white rounded-sm border shadow-sm p-4" style={{ borderColor: "#E8DDD4" }}>
+                <div className="flex items-center gap-2 mb-3">
+                    <Shield className="size-4" style={{ color: "#B8860B" }} />
+                    <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Executive Summary</span>
+                    <span className="text-[10px] text-stone-400 ml-auto font-mono">{new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}</span>
+                </div>
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                    <StatBlock label="Total Complaints" value={total} color="#8B1A1A" icon={FileText} />
+                    <StatBlock label="Resolution Rate" value={`${resolutionRate}%`} color="#1E8449" icon={CheckCircle2} />
+                    <StatBlock label="Open Issues" value={open} color="#D4880F" icon={Clock} />
+                    <StatBlock label="Escalated" value={escalated} color="#C0392B" icon={AlertTriangle} />
+                    <StatBlock label="Avg Resolution" value={`${avgResTime}d`} color="#2874A6" icon={TrendingUp} />
+                </div>
+            </div>
 
-                {/* Report Header (Print Only Style) */}
-                <div className="hidden print:block border-b pb-6 mb-8">
-                    <div className="flex justify-between items-center">
-                        <div>
-                            <h1 className="text-2xl font-bold text-black">Civic<span className="text-primary">Connect</span> Operations Report</h1>
-                            <p className="text-sm text-gray-500">Generated on {currentDate}</p>
+            {/* Charts Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+
+                {/* Monthly Trend */}
+                <div className="bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <TrendingUp className="size-4" style={{ color: "#8B1A1A" }} />
+                        <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Monthly Trend</span>
+                    </div>
+                    <div className="p-4">
+                        <div className="flex items-end gap-2 h-40">
+                            {monthData.map(([month, { total: t, resolved: r }]) => (
+                                <div key={month} className="flex-1 flex flex-col items-center gap-1">
+                                    <div className="w-full flex flex-col items-center gap-0.5" style={{ height: "120px" }}>
+                                        <div className="w-full flex items-end gap-0.5 h-full">
+                                            <div className="flex-1 rounded-sm transition-all duration-500" style={{ height: `${(t / maxMonthVal) * 100}%`, background: "#8B1A1A", minHeight: t > 0 ? "4px" : "0" }} />
+                                            <div className="flex-1 rounded-sm transition-all duration-500" style={{ height: `${(r / maxMonthVal) * 100}%`, background: "#1E8449", minHeight: r > 0 ? "4px" : "0" }} />
+                                        </div>
+                                    </div>
+                                    <span className="text-[9px] font-mono text-stone-400 uppercase">{month}</span>
+                                </div>
+                            ))}
                         </div>
-                        <div className="text-right text-sm">
-                            <p className="font-semibold">Department of Civic Affairs</p>
-                            <p>Official Record</p>
+                        <div className="flex items-center gap-4 mt-3 pt-2 border-t" style={{ borderColor: "#F0E8E0" }}>
+                            <div className="flex items-center gap-1.5">
+                                <div className="size-2 rounded-sm" style={{ background: "#8B1A1A" }} />
+                                <span className="text-[10px] text-stone-500">Filed</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <div className="size-2 rounded-sm" style={{ background: "#1E8449" }} />
+                                <span className="text-[10px] text-stone-500">Resolved</span>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                {/* Executive Summary */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <Card className="print:border print:shadow-none bg-primary/5 border-primary/10">
-                        <CardContent className="p-6">
-                            <div className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
-                                <FileText className="size-4" /> Total Complaints
-                            </div>
-                            <div className="text-3xl font-bold">{stats?.total || 0}</div>
-                        </CardContent>
-                    </Card>
-                    <Card className="print:border print:shadow-none bg-emerald-500/5 border-emerald-500/10">
-                        <CardContent className="p-6">
-                            <div className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
-                                <TrendingUp className="size-4 text-emerald-500" /> Resolution Rate
-                            </div>
-                            <div className="text-3xl font-bold text-emerald-600">
-                                {stats?.total ? Math.round((stats.resolved / stats.total) * 100) : 0}%
-                            </div>
-                        </CardContent>
-                    </Card>
-                    <Card className="print:border print:shadow-none bg-amber-500/5 border-amber-500/10">
-                        <CardContent className="p-6">
-                            <div className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
-                                <AlertTriangle className="size-4 text-amber-500" /> Open Issues
-                            </div>
-                            <div className="text-3xl font-bold text-amber-600">
-                                {(stats?.submitted || 0) + (stats?.in_progress || 0)}
-                            </div>
-                        </CardContent>
-                    </Card>
-                    <Card className="print:border print:shadow-none bg-rose-500/5 border-rose-500/10">
-                        <CardContent className="p-6">
-                            <div className="text-sm font-medium text-muted-foreground mb-2 flex items-center gap-2">
-                                <AlertTriangle className="size-4 text-rose-500" /> Escalated
-                            </div>
-                            <div className="text-3xl font-bold text-rose-600 font-mono">
-                                {stats?.escalated || 0}
-                            </div>
-                        </CardContent>
-                    </Card>
-                </div>
-
-                {/* Charts Area */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 print:block print:space-y-8">
-                    {/* Category Breakdown */}
-                    <Card className="print:border print:shadow-none print:break-inside-avoid">
-                        <CardContent className="p-6">
-                            <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                                <PieChart className="size-5 text-primary" />
-                                Complaint Categories
-                            </h3>
-                            <div className="space-y-4">
-                                {analytics?.byCategory?.slice(0, 5).map((cat: any, i: number) => (
-                                    <div key={i} className="space-y-1">
-                                        <div className="flex justify-between text-sm">
-                                            <span className="font-medium">{cat.category}</span>
-                                            <span className="text-muted-foreground">{cat.count} ({Math.round((cat.count / (stats?.total || 1)) * 100)}%)</span>
+                {/* Category Distribution */}
+                <div className="bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <BarChart3 className="size-4" style={{ color: "#8B1A1A" }} />
+                        <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Category Distribution</span>
+                    </div>
+                    <div className="p-4 space-y-2">
+                        {catData.map(([cat, count], i) => {
+                            const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                            const color = catColors[i % catColors.length];
+                            return (
+                                <div key={cat}>
+                                    <div className="flex items-center justify-between mb-1">
+                                        <div className="flex items-center gap-2">
+                                            <div className="size-2 rounded-sm" style={{ background: color }} />
+                                            <span className="text-[11px] font-semibold text-stone-600">{cat}</span>
                                         </div>
-                                        <div className="h-2 bg-muted rounded-full overflow-hidden">
-                                            <div
-                                                className="h-full bg-primary"
-                                                style={{ width: `${(cat.count / (stats?.total || 1)) * 100}%` }}
-                                            />
-                                        </div>
+                                        <span className="text-[10px] font-mono text-stone-400 tabular-nums">{count} ({pct}%)</span>
                                     </div>
-                                ))}
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    {/* Top Neglected Areas */}
-                    <Card className="print:border print:shadow-none print:break-inside-avoid">
-                        <CardContent className="p-6">
-                            <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                                <MapPin className="size-5 text-rose-500" />
-                                Critical Impact Areas
-                            </h3>
-                            <div className="space-y-4">
-                                {analytics?.topAreas?.map((area: any, i: number) => (
-                                    <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 print:bg-transparent print:border-b">
-                                        <span className="text-sm font-medium truncate max-w-[70%]">{area.address || "Unknown Location"}</span>
-                                        <span className="text-sm font-bold bg-rose-500/10 text-rose-600 px-2 py-1 rounded inline-block">
-                                            {area.count} Issues
-                                        </span>
+                                    <div className="h-2 rounded-sm overflow-hidden ml-4" style={{ background: "#F0E8E0" }}>
+                                        <div className="h-full rounded-sm transition-all duration-700" style={{ width: `${pct}%`, background: color }} />
                                     </div>
-                                ))}
-                                {(!analytics?.topAreas || analytics.topAreas.length === 0) && (
-                                    <p className="text-muted-foreground text-sm">No critical areas identified.</p>
-                                )}
-                            </div>
-                        </CardContent>
-                    </Card>
-                </div>
-
-                {/* Monthly Trends Table */}
-                <Card className="print:border print:shadow-none print:break-inside-avoid">
-                    <CardContent className="p-6">
-                        <h3 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                            <Calendar className="size-5 text-purple-500" />
-                            Monthly Performance Trend
-                        </h3>
-                        <div className="relative overflow-x-auto">
-                            <table className="w-full text-sm text-left">
-                                <thead className="text-xs text-muted-foreground uppercase bg-muted/30 print:bg-transparent border-b">
-                                    <tr>
-                                        <th className="px-6 py-3">Month</th>
-                                        <th className="px-6 py-3">Total Reports</th>
-                                        <th className="px-6 py-3">Resolved</th>
-                                        <th className="px-6 py-3">Resolution Rate</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {analytics?.monthlyTrends?.map((trend: any, i: number) => (
-                                        <tr key={i} className="border-b hover:bg-muted/10">
-                                            <td className="px-6 py-4 font-medium">{trend.month}</td>
-                                            <td className="px-6 py-4">{trend.total}</td>
-                                            <td className="px-6 py-4 text-emerald-600">{trend.resolved}</td>
-                                            <td className="px-6 py-4">
-                                                {Math.round((trend.resolved / trend.total) * 100)}%
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-                    </CardContent>
-                </Card>
-
-                {/* Print Footer */}
-                <div className="hidden print:block pt-8 border-t mt-8 text-center text-sm text-gray-400">
-                    <p>CivicConnect Automated System Report • {currentDate}</p>
+                                </div>
+                            );
+                        })}
+                        {catData.length === 0 && <p className="text-xs text-stone-400 text-center py-6">No data available</p>}
+                    </div>
                 </div>
             </div>
 
-            <style jsx global>{`
-                @media print {
-                    @page { margin: 2cm; }
-                    body { background: white; color: black; }
-                    .glass-card { background: white !important; border: 1px solid #ddd !important; box-shadow: none !important; }
-                    .text-muted-foreground { color: #666 !important; }
-                    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-                }
-            `}</style>
+            {/* Bottom Row */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+
+                {/* Status Breakdown */}
+                <div className="bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <PieChart className="size-4" style={{ color: "#8B1A1A" }} />
+                        <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Status Breakdown</span>
+                    </div>
+                    <div className="p-4 space-y-2">
+                        {Object.entries(statusMap).map(([status, count]) => {
+                            const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+                            const s = status.toLowerCase();
+                            let color = "#D4880F";
+                            if (s === "resolved" || s === "closed") color = "#1E8449";
+                            else if (s === "in progress" || s === "in_progress") color = "#2874A6";
+                            else if (s === "assigned") color = "#7D3C98";
+                            return (
+                                <div key={status} className="flex items-center gap-3">
+                                    <div className="size-3 rounded-sm" style={{ background: color }} />
+                                    <span className="text-[11px] font-semibold text-stone-600 flex-1 uppercase">{status.replace("_", " ")}</span>
+                                    <span className="text-[11px] font-mono text-stone-500 tabular-nums">{count}</span>
+                                    <span className="text-[10px] text-stone-400 w-10 text-right">{pct}%</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                </div>
+
+                {/* Performance Indicators */}
+                <div className="bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <Users className="size-4" style={{ color: "#8B1A1A" }} />
+                        <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Citizen Sentiment</span>
+                    </div>
+                    <div className="p-4 flex flex-col items-center">
+                        {/* Gauge */}
+                        <div className="relative w-32 h-16 mb-3">
+                            <svg viewBox="0 0 120 60" className="w-full h-full">
+                                <path d="M10 55 A50 50 0 0 1 110 55" fill="none" stroke="#F0E8E0" strokeWidth="10" strokeLinecap="round" />
+                                <path d="M10 55 A50 50 0 0 1 110 55" fill="none" stroke="url(#gauge)" strokeWidth="10" strokeLinecap="round"
+                                    strokeDasharray={`${resolutionRate * 1.57} 157`} />
+                                <defs>
+                                    <linearGradient id="gauge" x1="0%" y1="0%" x2="100%" y2="0%">
+                                        <stop offset="0%" stopColor="#C0392B" />
+                                        <stop offset="50%" stopColor="#D4880F" />
+                                        <stop offset="100%" stopColor="#1E8449" />
+                                    </linearGradient>
+                                </defs>
+                            </svg>
+                            <div className="absolute bottom-0 left-1/2 -translate-x-1/2">
+                                <span className="text-xl font-bold" style={{ color: "#3D2B1F" }}>{resolutionRate}</span>
+                                <span className="text-[10px] text-stone-400">/100</span>
+                            </div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                            {resolutionRate >= 60 ? <ArrowUpRight className="size-3" style={{ color: "#1E8449" }} /> : <ArrowDownRight className="size-3" style={{ color: "#C0392B" }} />}
+                            <span className="text-[11px] font-bold uppercase" style={{ color: resolutionRate >= 60 ? "#1E8449" : resolutionRate >= 40 ? "#D4880F" : "#C0392B" }}>
+                                {resolutionRate >= 60 ? "Improving" : resolutionRate >= 40 ? "Stable" : "Declining"}
+                            </span>
+                        </div>
+                        <p className="text-[10px] text-stone-400 mt-1 text-center">Based on resolution rate and response time</p>
+                    </div>
+                </div>
+
+                {/* Operational Notes */}
+                <div className="bg-white rounded-sm border shadow-sm" style={{ borderColor: "#E8DDD4" }}>
+                    <div className="flex items-center gap-2 px-4 py-2.5 border-b" style={{ borderColor: "#E8DDD4" }}>
+                        <Calendar className="size-4" style={{ color: "#B8860B" }} />
+                        <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "#3D2B1F" }}>Report Actions</span>
+                    </div>
+                    <div className="p-4 space-y-3">
+                        <button onClick={handlePrint} className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold rounded-sm border hover:bg-stone-50 transition-colors" style={{ borderColor: "#E8DDD4", color: "#5D4037" }}>
+                            <Printer className="size-4" style={{ color: "#8B1A1A" }} />
+                            <div className="text-left flex-1">
+                                <p>Generate PDF Report</p>
+                                <p className="text-[10px] text-stone-400 font-normal">Print-optimized ministerial brief</p>
+                            </div>
+                        </button>
+                        <button onClick={exportCSV} className="w-full flex items-center gap-2 px-3 py-2.5 text-xs font-semibold rounded-sm border hover:bg-stone-50 transition-colors" style={{ borderColor: "#E8DDD4", color: "#5D4037" }}>
+                            <Download className="size-4" style={{ color: "#1E8449" }} />
+                            <div className="text-left flex-1">
+                                <p>Download CSV Dataset</p>
+                                <p className="text-[10px] text-stone-400 font-normal">Raw data for further analysis</p>
+                            </div>
+                        </button>
+                        <div className="px-3 py-2.5 text-xs rounded-sm" style={{ background: "#FAF5F0", border: "1px solid #E8DDD4" }}>
+                            <p className="font-semibold" style={{ color: "#B8860B" }}>Auto Email Reports</p>
+                            <p className="text-[10px] text-stone-400 mt-0.5">Contact IT to schedule automated daily/weekly report emails to department heads.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/* ── Stat Block ── */
+function StatBlock({ label, value, color, icon: Icon }: { label: string; value: number | string; color: string; icon: any }) {
+    return (
+        <div className="text-center px-3 py-2.5 rounded-sm" style={{ background: "#FAF5F0" }}>
+            <Icon className="size-4 mx-auto mb-1.5" style={{ color }} />
+            <p className="text-xl font-bold tabular-nums" style={{ color: "#3D2B1F" }}>{value}</p>
+            <p className="text-[9px] font-bold uppercase tracking-widest mt-0.5" style={{ color }}>{label}</p>
         </div>
     );
 }

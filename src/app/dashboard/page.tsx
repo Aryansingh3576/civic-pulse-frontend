@@ -108,7 +108,8 @@ export default function DashboardPage() {
 
     useEffect(() => {
         if (!authLoading && !isAuthenticated) return; // skip fetch
-        api.get("/complaints")
+        const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
+        api.get("/complaints/mine", { headers: { Authorization: `Bearer ${token}` } })
             .then((res) => {
                 const raw = res.data?.data?.complaints || res.data;
                 if (Array.isArray(raw)) {
@@ -125,7 +126,7 @@ export default function DashboardPage() {
             })
             .catch(() => { })
             .finally(() => setLoading(false));
-    }, []);
+    }, [authLoading, isAuthenticated]);
 
     const filtered = complaints.filter((c) => {
         if (statusFilter !== "all" && c.status !== statusFilter) return false;
@@ -198,7 +199,7 @@ export default function DashboardPage() {
                                 transition={{ delay: 0.1 }}
                                 className="text-muted-foreground"
                             >
-                                Monitor and track civic issues across your community in real-time.
+                                Track and monitor your submitted reports in real-time.
                             </motion.p>
                         </div>
 

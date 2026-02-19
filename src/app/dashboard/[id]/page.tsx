@@ -156,10 +156,15 @@ export default function ComplaintDetailPage() {
                 <div className="text-center space-y-4">
                     <AlertTriangle className="size-12 text-rose-500 mx-auto" />
                     <h2 className="text-xl font-bold">Complaint Not Found</h2>
-                    <p className="text-muted-foreground">{error || "This complaint doesn't exist."}</p>
-                    <Button onClick={() => router.push("/dashboard")} variant="outline" className="rounded-full">
-                        <ArrowLeft className="mr-2 size-4" /> Back to Dashboard
-                    </Button>
+                    <p className="text-muted-foreground">{error || "This complaint doesn't exist or you may not have access."}</p>
+                    <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                        <Button onClick={() => window.location.reload()} variant="outline" className="rounded-full">
+                            Retry
+                        </Button>
+                        <Button onClick={() => router.push("/dashboard")} variant="outline" className="rounded-full">
+                            <ArrowLeft className="mr-2 size-4" /> Back to Dashboard
+                        </Button>
+                    </div>
                 </div>
             </div>
         );
